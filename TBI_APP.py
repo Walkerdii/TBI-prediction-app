@@ -23,8 +23,9 @@ SHAP_COLOR = "#2E86AB"
 def load_data():
     """Load and process data"""
     try:
+        # 从GitHub仓库读取数据
         df = pd.read_excel(
-            r"D:\文档\Dr.wu\组内互助\董世英\TBI\预测\final_result.xlsx",
+            "final_result.xlsx",  # 确保文件在repo根目录
             engine="openpyxl"
         )
 
