@@ -15,8 +15,12 @@ AGE_BINS = {
     16: "80-84", 17: "85-89", 18: "90-94", 19: "95+"
 }
 SEX_MAP = {0: "Female", 1: "Male"}
+DIAGNOSIS_MAP = {
+    0: "Head_Injuries",
+    1: "Minor_TBI",
+    2: "Moderate_Severe_TBI"
+}
 SHAP_COLOR = "#2E86AB"
-
 
 # ==================== Data Processing ====================
 @st.cache_data
@@ -30,13 +34,15 @@ def load_data():
         )
 
         # Encode categorical variables
-        le = LabelEncoder()
-        df["age"] = le.fit_transform(df["age_name"])
-        df["sex"] = le.fit_transform(df["sex_name"])
-        df["diagnosis"] = le.fit_transform(df["diagnosis"])
+        le_age = LabelEncoder()
+        df["age"] = le_age.fit_transform(df["age_name"])
+        le_sex = LabelEncoder()
+        df["sex"] = le_sex.fit_transform(df["sex_name"])
+        le_diag = LabelEncoder()
+        df["diagnosis"] = le_diag.fit_transform(df["diagnosis"])
 
-        # Train models
         features = df[["log_population", "sex", "age", "year", "diagnosis"]]
+
         models = {
             "YLDs": XGBModelWrapper().train(features, df["YLDs"]).model,
             "Incidence": XGBModelWrapper().train(features, df["Incidence"]).model,
@@ -46,13 +52,11 @@ def load_data():
         return models, df
 
     except Exception as e:
-        st.error(f"Data loading failed: {str(e)}")
+        st.error(f"数据加载失败: {str(e)}")
         st.stop()
 
 
 class XGBModelWrapper:
-    """Model training wrapper"""
-
     def __init__(self):
         self.model = XGBRegressor(
             objective="reg:squarederror",
@@ -90,26 +94,20 @@ with st.sidebar:
         value=10,
         help="Actual population = Input value × 1,000,000"
     )
-    diagnosis = st.selectbox("Diagnosis Category", ["Mild", "Moderate", "Severe"])
+    diagnosis = st.selectbox("Diagnosis Category", list(DIAGNOSIS_MAP.values()))
 
-# ==================== Data Encoding ====================
-# Convert user inputs to model features
+# ==================== Encode Inputs ====================
 age_code = [k for k, v in AGE_BINS.items() if v == age_group][0]
 sex_code = 0 if sex == "Female" else 1
 log_pop = np.log(population * 1_000_000)
-diag_code = {"Mild": 0, "Moderate": 1, "Severe": 2}[diagnosis]
+diag_code = {v: k for k, v in DIAGNOSIS_MAP.items()}[diagnosis]
 
-# ==================== Model Prediction ====================
+# ==================== Prediction ====================
 with st.spinner('Loading models and calculating predictions...'):
     models, df = load_data()
 
-input_data = pd.DataFrame([[
-    log_pop,
-    sex_code,
-    age_code,
-    year,
-    diag_code
-]], columns=["log_population", "sex", "age", "year", "diagnosis"])
+input_data = pd.DataFrame([[log_pop, sex_code, age_code, year, diag_code]],
+                          columns=["log_population", "sex", "age", "year", "diagnosis"])
 
 try:
     predictions = {
@@ -124,17 +122,11 @@ except Exception as e:
 # ==================== Results Display ====================
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.metric("Years Lived with Disability (YLDs)",
-              f"{predictions['YLDs']:,.1f}",
-              help="Measure of health loss due to disability")
+    st.metric("Years Lived with Disability (YLDs)", f"{predictions['YLDs']:,.1f}")
 with col2:
-    st.metric("Incidence Rate",
-              f"{predictions['Incidence']:.2f}/100,000",
-              help="Annual new case count per 100,000 population")
+    st.metric("Incidence Rate", f"{predictions['Incidence']:.2f}/100,000")
 with col3:
-    st.metric("Prevalence Rate",
-              f"{predictions['Prevalence']:.2f}%",
-              help="Proportion of existing cases in population")
+    st.metric("Prevalence Rate", f"{predictions['Prevalence']:.2f}%")
 
 # ==================== SHAP Explanation ====================
 st.divider()
@@ -144,20 +136,19 @@ try:
     explainer = shap.Explainer(models["YLDs"])
     shap_values = explainer(input_data)
 
-    # SHAP feature importance
     plt.figure(figsize=(10, 4))
     shap.plots.bar(shap_values[0], show=False)
     plt.title("Feature Impact Analysis", fontsize=14)
     plt.xlabel("SHAP Value (Impact on YLDs)", fontsize=10)
     st.pyplot(plt.gcf())
 
-    # Detailed impact values
     feature_names = ["Log Population", "Gender", "Age Group", "Year", "Diagnosis"]
     df_impact = pd.DataFrame({
         "Feature": feature_names,
         "SHAP Value": shap_values.values[0].round(4),
         "Impact Direction": ["Risk Increase" if x > 0 else "Risk Decrease" for x in shap_values.values[0]]
     })
+
     st.dataframe(
         df_impact,
         column_config={
@@ -176,10 +167,12 @@ with st.expander("🔍 Data Distribution Validation"):
 
     with tab1:
         age_dist = df["age_name"].value_counts().reset_index()
+        age_dist.columns = ["age_name", "count"]
         st.bar_chart(age_dist, x="age_name", y="count")
 
     with tab2:
         sex_dist = df["sex_name"].value_counts().reset_index()
+        sex_dist.columns = ["sex_name", "count"]
         st.bar_chart(sex_dist, x="sex_name", y="count")
 
 # ==================== Styling ====================
